@@ -43,7 +43,7 @@ INTERNAL_DOMAIN_PATTERNS = ["tpb.gov.au"]
 
 MAX_PAGES           = 5000   # Safety cap on internal pages crawled
 CRAWL_DELAY         = 0.5    # Seconds between requests (polite crawling)
-REQUEST_TIMEOUT     = 20     # Seconds before a request is abandoned
+REQUEST_TIMEOUT     = 30     # Seconds before a request is abandoned
 MAX_REDIRECT_DEPTH  = 5      # Flag redirect chains longer than this
 CHECK_WORKERS       = 10     # Parallel threads for external link checking
 
@@ -117,31 +117,40 @@ def check_url(session: requests.Session, url: str) -> dict:
         "final_url":        url,
         "response_time_ms": None,
     }
-    try:
-        t0 = time.time()
-        resp = session.get(url, timeout=REQUEST_TIMEOUT, allow_redirects=True, headers=HEADERS)
-        result["response_time_ms"] = round((time.time() - t0) * 1000)
-        result["status_code"]      = resp.status_code
-        result["final_url"]        = resp.url
-        if resp.history:
-            result["redirect_chain"] = [r.url for r in resp.history] + [resp.url]
-        result["error_type"] = classify_error(resp.status_code, result["redirect_chain"])
+    
+    for attempt in range(3):  # Retry up to 3 times
+        try:
+            time.sleep(attempt * 2)  # Wait longer between retries
+            t0 = time.time()
+            resp = session.get(url, timeout=REQUEST_TIMEOUT, allow_redirects=True, headers=HEADERS)
+            result["response_time_ms"] = round((time.time() - t0) * 1000)
+            result["status_code"]      = resp.status_code
+            result["final_url"]        = resp.url
+            if resp.history:
+                result["redirect_chain"] = [r.url for r in resp.history] + [resp.url]
+            result["error_type"] = classify_error(resp.status_code, result["redirect_chain"])
+            return result  # Success — stop retrying
 
-    except requests.exceptions.TooManyRedirects:
-        result["error_type"]  = "Redirect Loop / Too Many Redirects"
-        result["status_code"] = 0
-    except requests.exceptions.Timeout:
-        result["error_type"]  = "Timeout"
-        result["status_code"] = 0
-    except requests.exceptions.SSLError:
-        result["error_type"]  = "SSL Certificate Error"
-        result["status_code"] = 0
-    except requests.exceptions.ConnectionError:
-        result["error_type"]  = "Connection Error (DNS/Network)"
-        result["status_code"] = 0
-    except Exception as exc:
-        result["error_type"]  = f"Unexpected Error: {str(exc)[:80]}"
-        result["status_code"] = 0
+        except requests.exceptions.TooManyRedirects:
+            result["error_type"]  = "Redirect Loop / Too Many Redirects"
+            result["status_code"] = 0
+            return result
+        except requests.exceptions.Timeout:
+            if attempt == 2:  # Final attempt
+                result["error_type"]  = "Timeout"
+                result["status_code"] = 0
+        except requests.exceptions.SSLError:
+            result["error_type"]  = "SSL Certificate Error"
+            result["status_code"] = 0
+            return result
+        except requests.exceptions.ConnectionError:
+            result["error_type"]  = "Connection Error (DNS/Network)"
+            result["status_code"] = 0
+            return result
+        except Exception as exc:
+            result["error_type"]  = f"Unexpected Error: {str(exc)[:80]}"
+            result["status_code"] = 0
+            return result
 
     return result
 
