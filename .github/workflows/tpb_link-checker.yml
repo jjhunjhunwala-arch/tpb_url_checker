@@ -1,0 +1,61 @@
+name: 🔗 TPB Monthly Link Checker
+
+on:
+  schedule:
+    #        min  hour(UTC)  day  month  weekday
+    - cron: "0    22         28   *      *"
+    # 22:00 UTC = 08:00 AEST — runs 28th of every month
+
+  workflow_dispatch:   # ← "Run workflow" button for manual runs
+    inputs:
+      note:
+        description: "Optional note (e.g. reason for manual run)"
+        required: false
+        default: "Manual run"
+
+jobs:
+  link-check:
+    name: Crawl & Check All TPB Links
+    runs-on: ubuntu-latest
+    timeout-minutes: 120   # 2-hour safety cap
+
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v4
+
+      - name: 🐍 Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: 📦 Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: 🔗 Run link checker
+        env:
+          EMAIL_FROM:     ${{ secrets.EMAIL_FROM }}
+          EMAIL_TO:       ${{ secrets.EMAIL_TO }}
+          EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+          SMTP_SERVER:    ${{ secrets.SMTP_SERVER }}
+          SMTP_PORT:      ${{ secrets.SMTP_PORT }}
+        run: python link_checker.py
+
+      - name: 📊 Upload Excel report as artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: tpb-link-report-${{ github.run_number }}
+          path: tpb_link_report_*.xlsx
+          retention-days: 90
+
+      - name: ✅ Run complete
+        if: always()
+        run: |
+          echo "=================================="
+          echo "  TPB Link Check — Run Complete"
+          echo "  Triggered: ${{ github.event_name }}"
+          echo "  Report available in Artifacts ↑"
+          echo "=================================="
